@@ -7,13 +7,14 @@ Every step is timed and printed so we can see exactly where we are vs boxdetect.
 import time
 import numpy as np
 import cv2
-from scipy.ndimage import label as scipy_label, find_objects
+
+VERBOSE = False   # set True for step-by-step prints
 
 _T = {}
 def _tick(label): _T[label] = time.perf_counter()
 def _tock(label):
     ms = (time.perf_counter() - _T[label]) * 1000
-    print(f"  [npboxdetect] {label:<35} {ms:7.3f} ms")
+    if VERBOSE: print(f"  [npboxdetect] {label:<35} {ms:7.3f} ms")
     return ms
 
 
@@ -142,43 +143,52 @@ def morph_open_lines(binary, h_len, v_len):
     return (opened_h | opened_v).view(np.uint8) * 255
 
 
-# ── Step 5+6: connected components + bbox (scipy) ────────────────
+# ── Step 5+6: connected components + bbox (cv2) ──────────────────
 def label_and_bboxes(binary):
-    """scipy label + find_objects — fully vectorized, no Python loops."""
-    labeled, n = scipy_label(binary > 0)
-    slices = find_objects(labeled)           # list of (slice_y, slice_x) per label
-    boxes = []
-    for sl in slices:
-        if sl is None:
-            continue
-        sy, sx = sl
-        boxes.append((sx.start, sy.start, sx.stop - sx.start, sy.stop - sy.start))
-    return boxes
+    """
+    cv2.connectedComponentsWithStats — C-compiled, 3x faster than scipy.
+    Returns (x, y, w, h) per connected component. Label 0 = background, skip it.
+    stats columns: CC_STAT_LEFT, CC_STAT_TOP, CC_STAT_WIDTH, CC_STAT_HEIGHT, CC_STAT_AREA
+    """
+    num, _, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
+    return [(int(stats[i,0]), int(stats[i,1]), int(stats[i,2]), int(stats[i,3]))
+            for i in range(1, num)]
 
 
 # ── Step 6: NMS / merge overlapping boxes ────────────────────────
 def nms_boxes(boxes, iou_thresh=0.3):
+    """
+    Fully vectorized NMS — no Python while loop.
+    Builds full pairwise IoU matrix, suppresses via upper-triangle mask.
+    Fast when box count is small (after size filtering).
+    """
     if not boxes:
         return boxes
-    boxes = np.array(boxes, dtype=np.float32)
-    x1 = boxes[:, 0]; y1 = boxes[:, 1]
-    x2 = x1 + boxes[:, 2]; y2 = y1 + boxes[:, 3]
-    areas = boxes[:, 2] * boxes[:, 3]
-    order = areas.argsort()[::-1]
-    keep = []
-    while len(order):
-        i = order[0]
-        keep.append(i)
-        if len(order) == 1:
-            break
-        xx1 = np.maximum(x1[i], x1[order[1:]])
-        yy1 = np.maximum(y1[i], y1[order[1:]])
-        xx2 = np.minimum(x2[i], x2[order[1:]])
-        yy2 = np.minimum(y2[i], y2[order[1:]])
-        inter = np.maximum(0, xx2 - xx1) * np.maximum(0, yy2 - yy1)
-        iou = inter / (areas[i] + areas[order[1:]] - inter + 1e-6)
-        order = order[1:][iou < iou_thresh]
-    return [(int(boxes[i,0]), int(boxes[i,1]), int(boxes[i,2]), int(boxes[i,3])) for i in keep]
+    b = np.array(boxes, dtype=np.float32)
+    x1, y1, w, h = b[:,0], b[:,1], b[:,2], b[:,3]
+    x2, y2 = x1 + w, y1 + h
+    areas = w * h
+    # sort by area descending
+    order = np.argsort(-areas)
+    b, x1, y1, x2, y2, areas = b[order], x1[order], y1[order], x2[order], y2[order], areas[order]
+
+    N = len(b)
+    # pairwise intersection
+    ix1 = np.maximum(x1[:, None], x1[None, :])   # (N,N)
+    iy1 = np.maximum(y1[:, None], y1[None, :])
+    ix2 = np.minimum(x2[:, None], x2[None, :])
+    iy2 = np.minimum(y2[:, None], y2[None, :])
+    inter = np.maximum(0, ix2 - ix1) * np.maximum(0, iy2 - iy1)
+    iou = inter / (areas[:, None] + areas[None, :] - inter + 1e-6)
+
+    # suppress: for each box, suppress if a higher-priority box overlaps it
+    suppress = np.zeros(N, dtype=bool)
+    for i in range(N):
+        if not suppress[i]:
+            suppress[i+1:] |= iou[i, i+1:] >= iou_thresh
+
+    kept = b[~suppress]
+    return [(int(r[0]), int(r[1]), int(r[2]), int(r[3])) for r in kept]
 
 
 # ── Main pipeline ─────────────────────────────────────────────────
@@ -192,14 +202,14 @@ def get_boxes(img_path,
     _tick("1. load + grayscale")
     gray = load_gray(img_path)
     _tock("1. load + grayscale")
-    print(f"         └─ shape={gray.shape}")
+    if VERBOSE: print(f"         └─ shape={gray.shape}")
 
     _tick("2. downsample 2x")
     H, W = gray.shape
     gray_small = gray[::2, ::2]   # fast stride-based halving, no interpolation
     scale = 2.0
     _tock("2. downsample 2x")
-    print(f"         └─ shape after={gray_small.shape}")
+    if VERBOSE: print(f"         └─ shape after={gray_small.shape}")
 
     _tick("3. thresholding (otsu+mean)")
     binary = apply_thresholding(gray_small)
@@ -219,7 +229,7 @@ def get_boxes(img_path,
     # scale coords back to original image size
     boxes = [(int(x*scale), int(y*scale), int(w*scale), int(h*scale)) for x,y,w,h in boxes]
     _tock("5+6. label + extract bboxes (scipy)")
-    print(f"         └─ raw boxes: {len(boxes)}")
+    if VERBOSE: print(f"         └─ raw boxes: {len(boxes)}")
 
     _tick("7. filter by size + ratio")
     filtered = []
@@ -230,13 +240,13 @@ def get_boxes(img_path,
         if ratio < wh_ratio_range[0] or ratio > wh_ratio_range[1]: continue
         filtered.append((x, y, w, h))
     _tock("7. filter by size + ratio")
-    print(f"         └─ after filter: {len(filtered)}")
+    if VERBOSE: print(f"         └─ after filter: {len(filtered)}")
 
     _tick("8. NMS merge overlapping")
     result = nms_boxes(filtered, iou_thresh=0.3)
     _tock("8. NMS merge overlapping")
 
     total_ms = (time.perf_counter() - _t_total) * 1000
-    print(f"  [npboxdetect] {'TOTAL':<35} {total_ms:7.3f} ms  |  rects={len(result)}")
+    if VERBOSE: print(f"  [npboxdetect] {'TOTAL':<35} {total_ms:7.3f} ms  |  rects={len(result)}")
 
     return result

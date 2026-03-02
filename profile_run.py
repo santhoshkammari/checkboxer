@@ -1,6 +1,6 @@
 """
 profile_run.py  —  single image deep profiler
-Usage: python profile_run.py data/lc_application.jpg
+Usage: python profile_run.py data/lc_application1.png
 Shows per-step timing for boxdetect AND numpydetect side by side.
 """
 import sys
@@ -9,7 +9,7 @@ import time
 import cv2
 import numpy as np
 
-img_path = sys.argv[1] if len(sys.argv) > 1 else "data/lc_application.jpg"
+img_path = sys.argv[1] if len(sys.argv) > 1 else "data/lc_application1.png"
 assert os.path.exists(img_path), f"File not found: {img_path}"
 
 print(f"\n{'='*60}")

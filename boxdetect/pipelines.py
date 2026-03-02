@@ -5,11 +5,13 @@ import time
 
 from . import rect_proc, img_proc, config
 
+VERBOSE = False
+
 _T = {}
 def _tick(label): _T[label] = time.perf_counter()
 def _tock(label):
     ms = (time.perf_counter() - _T[label]) * 1000
-    print(f"  [boxdetect] {label:<35} {ms:7.3f} ms")
+    if VERBOSE: print(f"  [boxdetect] {label:<35} {ms:7.3f} ms")
     return ms
 
 
@@ -230,7 +232,7 @@ def get_boxes(img, cfg: config.PipelinesConfig, plot=False):
                     vertical_length=int(min_h * 0.95),
                     thickness=morph_kernels_thickness)
             _tock("6. build kernels")
-            print(f"         └─ type={morph_kernels_type}  count={len(kernels)}")
+            if VERBOSE: print(f"         └─ type={morph_kernels_type}  count={len(kernels)}")
 
             _tick("7. morph OPEN loop (bottleneck)")
             image = img_proc.apply_merge_transformations(image, kernels, plot=plot)
@@ -239,7 +241,7 @@ def get_boxes(img, cfg: config.PipelinesConfig, plot=False):
             _tick("8. find contours")
             cnts = rect_proc.get_contours(image)
             _tock("8. find contours")
-            print(f"         └─ raw contours: {len(cnts)}")
+            if VERBOSE: print(f"         └─ raw contours: {len(cnts)}")
 
             _tick("9. filter contours")
             cnts = rect_proc.filter_contours_by_area_size(cnts, area_range)
@@ -247,7 +249,7 @@ def get_boxes(img, cfg: config.PipelinesConfig, plot=False):
             cnts = rect_proc.filter_contours_by_size_range(cnts, width_range, height_range)
             cnts = rect_proc.filter_contours_by_wh_ratio(cnts, wh_ratio_range)
             _tock("9. filter contours")
-            print(f"         └─ after filter: {len(cnts)}")
+            if VERBOSE: print(f"         └─ after filter: {len(cnts)}")
             cnts_list += cnts
 
     _tick("10. group/merge overlapping rects")
@@ -277,7 +279,7 @@ def get_boxes(img, cfg: config.PipelinesConfig, plot=False):
     _tock("13. draw + return")
 
     total_ms = (time.perf_counter() - _t_total) * 1000
-    print(f"  [boxdetect] {'TOTAL':<35} {total_ms:7.3f} ms  |  rects={len(rects)}")
+    if VERBOSE: print(f"  [boxdetect] {'TOTAL':<35} {total_ms:7.3f} ms  |  rects={len(rects)}")
 
     if len(rects) == 0:
         print("WARNING: No rectangles were found in the input image.")
