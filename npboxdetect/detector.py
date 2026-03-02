@@ -7,7 +7,7 @@ Every step is timed and printed so we can see exactly where we are vs boxdetect.
 import time
 import numpy as np
 import cv2
-from npboxdetect._numba_ops import open_lines_numba as _numba_open
+from npboxdetect._numba_ops import open_lines_numba as _numba_open, threshold_combined as _numba_thresh, otsu_threshold as _numba_otsu, otsu_and_threshold as _numba_otsu_thresh
 
 VERBOSE = False   # set True for step-by-step prints
 
@@ -204,9 +204,9 @@ def get_boxes(img_path,
     _tock("2. downsample 2x")
     if VERBOSE: print(f"         └─ shape after={gray_small.shape}")
 
-    _tick("3. thresholding (otsu+mean)")
-    binary = apply_thresholding(gray_small)
-    _tock("3. thresholding (otsu+mean)")
+    _tick("3. thresholding (numba fused otsu+thresh)")
+    binary = _numba_otsu_thresh(gray_small)   # 0/1 output, no cv2 call
+    _tock("3. thresholding (numba fused otsu+thresh)")
 
     _tick("4. morph OPEN lines (numba parallel)")
     min_w, max_w = width_range
@@ -214,7 +214,7 @@ def get_boxes(img_path,
     h_len = max(2, int(min_w * 0.95 / scale))
     v_len = max(2, int(min_h * 0.95 / scale))
     L = max(h_len, v_len)  # symmetric — use single length for h+v
-    opened = _numba_open((binary > 0).astype(np.uint8), L)
+    opened = _numba_open(binary, L)   # binary already 0/1 from otsu_and_threshold
     _tock("4. morph OPEN lines (numba parallel)")
 
     _tick("5. CC + scale + filter (vectorized)")

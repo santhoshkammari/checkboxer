@@ -8,6 +8,90 @@ set_num_threads(_CORES)
 
 
 @njit(cache=True)
+def otsu_threshold(gray):
+    """Compute Otsu threshold from histogram — pure numba, no cv2."""
+    hist = np.zeros(256, dtype=np.int32)
+    H, W = gray.shape
+    for r in range(H):
+        for c in range(W):
+            hist[gray[r, c]] += 1
+    total = H * W
+    sum_all = 0.0
+    for i in range(256):
+        sum_all += i * hist[i]
+    sumB = 0.0; wB = 0; best = 0.0; thresh = 0
+    for t in range(256):
+        wB += hist[t]
+        if wB == 0: continue
+        wF = total - wB
+        if wF == 0: break
+        sumB += t * hist[t]
+        mB = sumB / wB
+        mF = (sum_all - sumB) / wF
+        var = wB * wF * (mB - mF) * (mB - mF)
+        if var > best:
+            best = var; thresh = t
+    return thresh
+
+
+@njit(parallel=True, cache=True)
+def threshold_combined(gray, t_otsu, t_mean):
+    """
+    Single parallel pass: pixel=255 if gray < t_otsu OR gray < t_mean.
+    Replaces two separate cv2.threshold calls + bitwise_or.
+    """
+    H, W = gray.shape
+    out = np.empty((H, W), dtype=np.uint8)
+    t_max = max(t_otsu, t_mean)   # OR of two inversions = single threshold at max
+    for r in prange(H):
+        for c in range(W):
+            out[r, c] = 255 if gray[r, c] <= t_max else 0
+    return out
+
+
+@njit(parallel=True, cache=True)
+def otsu_and_threshold(gray):
+    """
+    Single function: compute Otsu+mean threshold AND apply binarization.
+    One serial histogram pass + one parallel threshold pass.
+    Avoids the overhead of cv2.threshold just for the Otsu value.
+    Returns binary uint8 array (0/1, not 0/255).
+    """
+    H, W = gray.shape
+    # --- histogram (serial, 256 bins) ---
+    hist = np.zeros(256, dtype=np.int32)
+    for r in range(H):
+        for c in range(W):
+            hist[gray[r, c]] += 1
+    total = H * W
+    # --- otsu ---
+    sum_all = 0.0
+    for i in range(256):
+        sum_all += i * hist[i]
+    sumB = 0.0; wB = 0; best = 0.0; t_otsu = 0
+    for t in range(256):
+        wB += hist[t]
+        if wB == 0: continue
+        wF = total - wB
+        if wF == 0: break
+        sumB += t * hist[t]
+        mB = sumB / wB
+        mF = (sum_all - sumB) / wF
+        var = wB * wF * (mB - mF) * (mB - mF)
+        if var > best:
+            best = var; t_otsu = t
+    # --- mean ---
+    t_mean = int(sum_all / total)
+    t_max = max(t_otsu, t_mean)
+    # --- parallel threshold (0/1 output for open_lines_numba) ---
+    out = np.empty((H, W), dtype=np.uint8)
+    for r in prange(H):
+        for c in range(W):
+            out[r, c] = np.uint8(1) if gray[r, c] <= t_max else np.uint8(0)
+    return out
+
+
+@njit(cache=True)
 def open_lines_serial(b, L):
     """Single-threaded numba — consistent latency, no thread spin-up jitter."""
     H, W = b.shape

@@ -75,3 +75,62 @@ processing total  ~17ms
 ```
 
 morph_open (10ms) is the last wall. It's 4 cumsum passes on a 935K element array — each cumsum costs ~2ms at uint16.
+
+---
+
+## Fix 3 — Numba parallel run-length morph open: 10ms → 1.3ms
+
+Replaced cumsum trick (4 numpy passes) with numba `@njit(parallel=True)` run-length scan.
+Each row/column processed independently → no dependencies → all rows in parallel via `prange`.
+
+```python
+@njit(parallel=True, cache=True)
+def open_lines_numba(b, L):
+    for r in prange(H):    # each row independent
+        # run-length: find L-long runs of 1s, mark them
+    for col in prange(W):  # each col independent
+        # same vertical
+    return out_h | out_v
+```
+
+**Result: 17ms → 8ms processing total**
+
+---
+
+## Fix 4 — Fused numba otsu+threshold: 2.1ms → 1.4ms
+
+`cv2.threshold(..., THRESH_OTSU)` costs 1.3ms just to return the threshold value.
+Replaced with a single fused numba function: one serial histogram pass → Otsu + mean → one parallel binarization pass.
+Eliminates the cv2 call entirely and outputs 0/1 directly (skipping the `(binary>0).astype` cast).
+
+```python
+@njit(parallel=True, cache=True)
+def otsu_and_threshold(gray):
+    # histogram pass (serial, 256 bins)
+    # otsu + mean calculation (256-iteration loop)
+    # parallel binarize: pixel <= max(t_otsu, t_mean) → 1 else 0
+    return out   # dtype=uint8, values 0/1
+```
+
+**Result: 8ms → 6.2ms processing total**
+
+---
+
+## Final benchmark (processing only, imread excluded)
+
+| Image | npboxdetect p50 | boxdetect p50 | Speedup |
+|---|---|---|---|
+| lc_application1.png | **6.5ms** | 25.5ms | **3.9x** |
+| lc_application2.png | **7.1ms** | 18.6ms | **2.6x** |
+
+## Final floor per step
+
+```
+downsample 2x      ~0ms  — zero-copy stride view
+otsu+threshold      1.4ms — fused numba (histogram+binarize)
+morph open          1.3ms — numba parallel run-length
+cv2 CC + filter     1.3ms — C-compiled, irreducible
+NMS                 0.2ms — vectorized pairwise IoU
+─────────────────────────
+processing total   ~6ms
+```
