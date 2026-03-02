@@ -2,6 +2,28 @@
 
 > Fastest checkbox detector. NumPy + Numba. No deep learning.
 
+## Install
+
+```bash
+pip install npboxdetect
+```
+
+## Usage
+
+```python
+from npboxdetect import get_boxes
+
+# get bounding boxes
+boxes = get_boxes("form.png")
+# [(x, y, w, h), ...]
+
+# get boxes + save annotated image
+boxes = get_boxes("form.png", save_image="out.png")
+
+# custom size range
+boxes = get_boxes("form.png", width_range=(15, 50), height_range=(15, 50))
+```
+
 ## Benchmark
 
 | Approach | p50 (ms) | boxes | vs npboxdetect |
@@ -19,15 +41,6 @@
 |---|---|---|---|
 | lc_application1.png | **6.5ms** | 25.5ms | **3.9x** |
 | lc_application2.png | **7.1ms** | 18.6ms | **2.6x** |
-
-## Usage
-
-```python
-from npboxdetect.detector import get_boxes
-
-boxes = get_boxes("form.png")
-# [(x, y, w, h), ...]
-```
 
 ## How it works
 
@@ -49,13 +62,14 @@ Key ideas:
 - **Run-length morph open** — each row/column independent → `prange` parallelism, no cumsum overhead
 - **Filter before NMS** — size/ratio filter drops 1000+ blobs to ~70 before NMS
 
-## Install
+## PyPI
 
 ```bash
-git clone https://github.com/santhoshkammari/checkboxer
-cd checkboxer
-pip install numba opencv-python numpy
+pip install npboxdetect        # latest
+pip install npboxdetect==0.1.2 # pinned
 ```
+
+https://pypi.org/project/npboxdetect/
 
 ## Journey
 
