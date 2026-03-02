@@ -1,8 +1,16 @@
 import cv2
 import imutils
 import numpy as np
+import time
 
 from . import rect_proc, img_proc, config
+
+_T = {}
+def _tick(label): _T[label] = time.perf_counter()
+def _tock(label):
+    ms = (time.perf_counter() - _T[label]) * 1000
+    print(f"  [boxdetect] {label:<35} {ms:7.3f} ms")
+    return ms
 
 
 def get_checkboxes(
@@ -136,8 +144,10 @@ def get_boxes(img, cfg: config.PipelinesConfig, plot=False):
             src_image - same object that was passed in as `img` parameter
             output_image - `numpy.ndarray` representing source image with plotted boxes and grouped boxes
     """ # NOQA E501
-    image_org = img_proc.get_image(img)
+    _t_total = time.perf_counter()
 
+    _tick("1. load image")
+    image_org = img_proc.get_image(img)
     ch = None
     if image_org.ndim == 3:
         ch = image_org.shape[-1]
@@ -145,6 +155,7 @@ def get_boxes(img, cfg: config.PipelinesConfig, plot=False):
         ch = 1
 
     cfg.update_num_iterations()
+    _tock("1. load image")
 
     # parameters
     thickness = cfg.thickness
@@ -157,25 +168,24 @@ def get_boxes(img, cfg: config.PipelinesConfig, plot=False):
     # process image using range of scaling factors
     cnts_list = []
     for scaling_factor in scaling_factors:
-        # resize the image for processing time
+        _tick("2. resize")
         image_scaled = image_org.copy()
         image_scaled = imutils.resize(
             image_scaled, width=int(image_scaled.shape[1] * scaling_factor))
-
         resize_ratio = image_org.shape[0] / image_scaled.shape[0]
         resize_ratio_inv = image_scaled.shape[0] / image_org.shape[0]
+        _tock("2. resize")
 
-        # convert the resized image to grayscale
+        _tick("3. grayscale")
         try:
             image_scaled = cv2.cvtColor(image_scaled, cv2.COLOR_BGR2GRAY)
         except Exception:
             pass
-            # print("WARNING: Failed to convert to grayscale... skipping")
+        _tock("3. grayscale")
 
-        # apply tresholding to get all the pixel values to either 0 or 255
-        # this function also inverts colors
-        # (black pixels will become the background)
+        _tick("4. thresholding (otsu+mean)")
         image_scaled = img_proc.apply_thresholding(image_scaled, plot)
+        _tock("4. thresholding (otsu+mean)")
 
         for (
             width_range, height_range, wh_ratio_range,
@@ -197,15 +207,15 @@ def get_boxes(img, cfg: config.PipelinesConfig, plot=False):
                 round(max_w * max_h * 1.10)
             )
 
-            # basic pixel inflation
-            kernel = cv2.getStructuringElement(
-                cv2.MORPH_RECT, dilation_kernel)
-            image = cv2.dilate(
-                image, kernel, iterations=dilation_iterations)
+            _tick("5. dilation")
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, dilation_kernel)
+            image = cv2.dilate(image, kernel, iterations=dilation_iterations)
             if plot:  # pragma: no cover
                 cv2.imshow("dilated", image)
                 cv2.waitKey(0)
+            _tock("5. dilation")
 
+            _tick("6. build kernels")
             if morph_kernels_type == 'rectangles':
                 # creating rectangular-shape kernels to be used for
                 # extracting rectangular shapes
@@ -219,63 +229,55 @@ def get_boxes(img, cfg: config.PipelinesConfig, plot=False):
                     horizontal_length=int(min_w * 0.95),
                     vertical_length=int(min_h * 0.95),
                     thickness=morph_kernels_thickness)
+            _tock("6. build kernels")
+            print(f"         └─ type={morph_kernels_type}  count={len(kernels)}")
 
-            image = img_proc.apply_merge_transformations(
-                image, kernels, plot=plot)
+            _tick("7. morph OPEN loop (bottleneck)")
+            image = img_proc.apply_merge_transformations(image, kernels, plot=plot)
+            _tock("7. morph OPEN loop (bottleneck)")
 
-            # find contours in the thresholded image
+            _tick("8. find contours")
             cnts = rect_proc.get_contours(image)
+            _tock("8. find contours")
+            print(f"         └─ raw contours: {len(cnts)}")
 
-            # filter countours based on area size
+            _tick("9. filter contours")
             cnts = rect_proc.filter_contours_by_area_size(cnts, area_range)
-
-            # rescale countours to original image size
             cnts = rect_proc.rescale_contours(cnts, resize_ratio)
-
-            cnts = rect_proc.filter_contours_by_size_range(
-                cnts, width_range, height_range)
-
-            # filter global countours by rectangle WxH ratio
-            cnts = rect_proc.filter_contours_by_wh_ratio(
-                cnts, wh_ratio_range)
-            # add countours detected with current scaling factor run
-            # to the global collection
+            cnts = rect_proc.filter_contours_by_size_range(cnts, width_range, height_range)
+            cnts = rect_proc.filter_contours_by_wh_ratio(cnts, wh_ratio_range)
+            _tock("9. filter contours")
+            print(f"         └─ after filter: {len(cnts)}")
             cnts_list += cnts
 
-    # rects = [rect_proc.get_bounding_rect(c)[:4] for c in cnts]
-    # merge rectangles into group if overlapping
+    _tick("10. group/merge overlapping rects")
     rects = rect_proc.group_countours(cnts_list)
+    _tock("10. group/merge overlapping rects")
 
-    # mean_width = np.mean(rects[:, 2])
-    # mean_height = np.mean(rects[:, 3])
-
-    # group rectangles vertically (line by line)
+    _tick("11. group vertically")
     vertical_rect_groups = rect_proc.group_rects(
-        rects, max_distance=vertical_max_distance,
-        grouping_mode='vertical')
+        rects, max_distance=vertical_max_distance, grouping_mode='vertical')
+    _tock("11. group vertically")
 
-    # group rectangles horizontally (horizontally cluster nearby rects)
+    _tick("12. group horizontally")
     rect_groups = rect_proc.get_groups_from_groups(
-        vertical_rect_groups,
-        max_distance=horizontal_max_distance,
+        vertical_rect_groups, max_distance=horizontal_max_distance,
         group_size_range=group_size_range, grouping_mode='horizontal')
-
-    # get grouping rectangles
     grouping_rectangles = rect_proc.get_grouping_rectangles(rect_groups)
+    _tock("12. group horizontally")
 
+    _tick("13. draw + return")
     if ch == 1:
         image_org = cv2.cvtColor(image_org, cv2.COLOR_GRAY2BGR)
-
-    # draw character rectangles on original image
-    image_org = img_proc.draw_rects(
-        image_org, rects, color=(0, 255, 0), thickness=thickness)
-    # draw grouping rectangles on original image
-    image_org = img_proc.draw_rects(
-        image_org, grouping_rectangles, color=(255, 0, 0), thickness=thickness)
-
+    image_org = img_proc.draw_rects(image_org, rects, color=(0, 255, 0), thickness=thickness)
+    image_org = img_proc.draw_rects(image_org, grouping_rectangles, color=(255, 0, 0), thickness=thickness)
     if plot:  # pragma: no cover
         cv2.imshow("Org image with boxes", image_org)
         cv2.waitKey(0)
+    _tock("13. draw + return")
+
+    total_ms = (time.perf_counter() - _t_total) * 1000
+    print(f"  [boxdetect] {'TOTAL':<35} {total_ms:7.3f} ms  |  rects={len(rects)}")
 
     if len(rects) == 0:
         print("WARNING: No rectangles were found in the input image.")
