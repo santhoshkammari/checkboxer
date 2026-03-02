@@ -1,63 +1,65 @@
-# checkboxer
+# checkboxer / npboxdetect
 
-> Pure NumPy checkbox detection. No deep learning. No OpenCV dependency. Just fast.
+> Fastest checkbox detector. NumPy + Numba. No deep learning.
 
-## What is this?
+## Benchmark
 
-**checkboxer** detects checkboxes in images and returns their bounding boxes — built purely on NumPy.
+| Approach | p50 (ms) | boxes | vs npboxdetect |
+|---|---|---|---|
+| **npboxdetect** | **34ms** | 69 | baseline |
+| boxdetect | 60ms | 67 | 1.8x slower |
+| opencv_contours | 33ms | 179 | ~same (but noisy) |
+| morphology | 34ms | 25 | ~same (misses many) |
 
-Most existing solutions rely on OpenCV, YOLOv8, or heavy ML frameworks. This project proves you don't need any of that.
+*50-run p50, full pipeline including imread, on 2200×1700 document images.*
+
+**Pure processing (imread excluded):**
+
+| Image | npboxdetect | boxdetect | Speedup |
+|---|---|---|---|
+| lc_application1.png | **6.5ms** | 25.5ms | **3.9x** |
+| lc_application2.png | **7.1ms** | 18.6ms | **2.6x** |
+
+## Usage
 
 ```python
-from checkboxer import detect
+from npboxdetect.detector import get_boxes
 
-bboxes = detect("form.png")
-# Returns: [(x, y, w, h), ...]
+boxes = get_boxes("form.png")
+# [(x, y, w, h), ...]
 ```
 
-## Why?
+## How it works
 
-| Library | Dependency | Speed |
-|---|---|---|
-| boxdetect | OpenCV | slow |
-| YOLOv8-based | PyTorch + CUDA | heavy |
-| checkbox_detection (OpenCV) | OpenCV | moderate |
-| **checkboxer** | **NumPy only** | **fast** |
+Five steps, all near-hardware-limit:
 
-Existing solutions felt either too heavy or not optimized for raw speed. This is my attempt to build the fastest checkbox detector possible using first principles — just NumPy and image math.
+```
+downsample 2x        ~0ms   stride view, zero copy
+otsu + threshold      1.4ms  fused numba: histogram → binarize in one shot
+morph open            1.3ms  numba parallel run-length scan (rows+cols)
+connected components  1.3ms  cv2.connectedComponentsWithStats
+NMS                   0.2ms  vectorized pairwise IoU matrix
+─────────────────────────────
+processing total      ~6ms
+```
 
-## Goal
-
-- Input: image (PNG/JPG)
-- Output: list of bounding boxes `[(x, y, w, h), ...]`
-- Zero OpenCV, zero PyTorch, zero deep learning
-- Benchmarked against popular alternatives
-
-## Benchmarks (coming soon)
-
-Will compare speed, accuracy, and memory usage against:
-- [boxdetect](https://github.com/karolzak/boxdetect) (OpenCV-based)
-- [LynnHaDo/Checkbox-Detection](https://github.com/LynnHaDo/Checkbox-Detection) (YOLOv8)
-- [edbabayan/Checkbox-Detection](https://github.com/edbabayan/Checkbox-Detection) (ML-based)
-- [Manikandan/checkbox_detection_opencv](https://github.com/Manikandan-Thangaraj-ZS0321/checkbox_detection_opencv) (OpenCV)
+Key ideas:
+- **2x downsample** before processing — free stride view, halves pixel count
+- **Fused numba otsu+threshold** — one serial histogram pass + one parallel binarize pass, no cv2 call
+- **Run-length morph open** — each row/column independent → `prange` parallelism, no cumsum overhead
+- **Filter before NMS** — size/ratio filter drops 1000+ blobs to ~70 before NMS
 
 ## Install
 
 ```bash
-pip install checkboxer
-```
-
-Or from source:
-
-```bash
 git clone https://github.com/santhoshkammari/checkboxer
 cd checkboxer
-pip install -e .
+pip install numba opencv-python numpy
 ```
 
-## Status
+## Journey
 
-🔨 Active development — building the core detector now.
+See [JOURNEY.md](JOURNEY.md) (v0→v6, 4248ms→37ms) and [JOURNEY2.md](JOURNEY2.md) (v7→v10, 37ms→6ms).
 
 ## Author
 
