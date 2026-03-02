@@ -1,5 +1,5 @@
 name = "npboxdetect"
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 # pre-compile numba kernel on import with a tiny dummy array
 import numpy as _np

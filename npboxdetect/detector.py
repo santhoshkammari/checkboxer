@@ -188,7 +188,8 @@ def nms_boxes(boxes, iou_thresh=0.3):
 def get_boxes(img_path,
               width_range=(20, 60),
               height_range=(20, 60),
-              wh_ratio_range=(0.5, 2.0)):
+              wh_ratio_range=(0.5, 2.0),
+              save_image=None):
 
     _t_total = time.perf_counter()
 
@@ -228,5 +229,11 @@ def get_boxes(img_path,
 
     total_ms = (time.perf_counter() - _t_total) * 1000
     if VERBOSE: print(f"  [npboxdetect] {'TOTAL':<35} {total_ms:7.3f} ms  |  rects={len(result)}")
+
+    if save_image is not None:
+        img = cv2.imread(img_path)
+        for (x, y, w, h) in result:
+            cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        cv2.imwrite(save_image, img)
 
     return result

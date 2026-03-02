@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "npboxdetect"
-version = "0.1.1"
+version = "0.1.2"
 description = "Fastest checkbox/box detector — NumPy + Numba, 3-4x faster than boxdetect"
 readme = "README.md"
 license = { text = "MIT" }
