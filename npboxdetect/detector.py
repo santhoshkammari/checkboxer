@@ -7,6 +7,7 @@ Every step is timed and printed so we can see exactly where we are vs boxdetect.
 import time
 import numpy as np
 import cv2
+from npboxdetect._numba_ops import open_lines_numba as _numba_open
 
 VERBOSE = False   # set True for step-by-step prints
 
@@ -215,14 +216,14 @@ def get_boxes(img_path,
     binary = apply_thresholding(gray_small)
     _tock("3. thresholding (otsu+mean)")
 
-    _tick("4. morph OPEN lines (separable 1D)")
+    _tick("4. morph OPEN lines (numba parallel)")
     min_w, max_w = width_range
     min_h, max_h = height_range
-    # scale kernel sizes down with the image
     h_len = max(2, int(min_w * 0.95 / scale))
     v_len = max(2, int(min_h * 0.95 / scale))
-    opened = morph_open_lines(binary, h_len, v_len)
-    _tock("4. morph OPEN lines (separable 1D)")
+    L = max(h_len, v_len)  # symmetric — use single length for h+v
+    opened = _numba_open((binary > 0).astype(np.uint8), L)
+    _tock("4. morph OPEN lines (numba parallel)")
 
     _tick("5+6. label + extract bboxes (scipy)")
     boxes = label_and_bboxes(opened)
