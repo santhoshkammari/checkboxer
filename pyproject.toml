@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "npboxdetect"
+version = "0.1.0"
+description = "Fastest checkbox/box detector — NumPy + Numba, 3-4x faster than boxdetect"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "santhoshkammari", email = "santhoshkammari1999@gmail.com" }]
+keywords = ["checkbox", "detection", "numba", "numpy", "ocr", "document"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "numba",
+    "opencv-python",
+]
+
+[project.urls]
+Homepage = "https://github.com/santhoshkammari/checkboxer"
+
+[tool.hatch.build.targets.wheel]
+packages = ["npboxdetect"]

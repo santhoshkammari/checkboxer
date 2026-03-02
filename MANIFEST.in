@@ -1,0 +1,4 @@
+exclude data/*
+exclude results/*
+exclude benchmark.py
+exclude profile_run.py
